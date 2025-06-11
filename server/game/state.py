@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TYPE_CHECKING, Set
 
 import trio
 
@@ -18,6 +18,8 @@ class GameState:
         self.story_data: Dict[str, Any] = STORIES
         self.conversation_histories: Dict[str, List[str]] = {room: [] for room in self.story_data.keys()}
         self.room_turn_counters: Dict[str, int] = {}
+        # Новое состояние для отслеживания использованных идей
+        self.used_story_elements: Dict[str, Set[str]] = {}
         self.start_room: str = 'endless_metro'
         self.game_mode: str = 'приключение'
         self.fear_weights: Dict[str, int] = DEFAULT_FEAR_WEIGHTS.copy()
@@ -96,7 +98,8 @@ class GameState:
             self.state = 'lobby'
             self.conversation_histories = {room: [] for room in self.story_data.keys()}
             self.room_turn_counters = {}
-            lg.debug("Истории и счетчики ходов всех комнат очищены.")
+            self.used_story_elements = {}
+            lg.debug("Истории, счетчики ходов и использованные элементы всех комнат очищены.")
             for player in self.players.values():
                 player.current_room = 'lobby'
             lg.info(f"Все {len(self.players)} игроков перемещены в 'лобби'.")
@@ -168,6 +171,19 @@ class GameState:
             current_count = self.room_turn_counters.get(room, 0)
             self.room_turn_counters[room] = current_count + 1
             lg.info(f"Счетчик ходов для комнаты '{room}' увеличен до {current_count + 1}.")
+
+    async def get_used_story_elements(self, room: str) -> Set[str]:
+        """Возвращает множество уже использованных идей для комнаты."""
+        async with self._lock:
+            return self.used_story_elements.get(room, set()).copy()
+
+    async def add_used_story_elements(self, room: str, elements: List[str]):
+        """Добавляет список новых идей в множество использованных для комнаты."""
+        async with self._lock:
+            if room not in self.used_story_elements:
+                self.used_story_elements[room] = set()
+            self.used_story_elements[room].update(elements)
+            lg.debug(f"В комнате '{room}' добавлено {len(elements)} новых использованных элементов.")
 
     async def get_stats(self) -> str:
         async with self._lock:

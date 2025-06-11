@@ -1,11 +1,11 @@
 import random
 from typing import Any, Dict, List
 
+from .. import config
 from ..game.state import GameState
 from ..logger import lg
 from . import templates
 
-IMMERSION_TURNS = 2
 
 ALL_ELEMENT_CATEGORIES = {
     'sounds': 'ЗВУК',
@@ -28,10 +28,10 @@ FIXED_ELEMENT_STRUCTURE = {
 }
 
 
-def _get_dynamic_focus_elements(game_state: GameState, story_data: Dict[str, Any]) -> str:
+async def _get_dynamic_focus_elements(game_state: GameState, story_data: Dict[str, Any], room_name: str) -> str:
     """
-    Создает список элементов для фокуса сцены, следуя строгой структуре.
-    Использует статичные веса страхов из GameState.
+    Создает список элементов для фокуса сцены, избегая повторений.
+    Использует статичные веса страхов и отслеживает использованные элементы через GameState.
     """
     weights_dict = game_state.fear_weights
     fear_types_population = list(weights_dict.keys())
@@ -46,13 +46,14 @@ def _get_dynamic_focus_elements(game_state: GameState, story_data: Dict[str, Any
             source_dict = details if category in details.get(fear_type, {}) else events
             all_sources[fear_type][category] = source_dict.get(fear_type, {}).get(category, [])
 
-    selected_elements: List[str] = []
-    used_items: set[str] = set()
+    selected_elements_text: List[str] = []
+    newly_used_items: List[str] = []
+
+    used_items = await game_state.get_used_story_elements(room_name)
 
     for category_key, count in FIXED_ELEMENT_STRUCTURE.items():
         for _ in range(count):
             chosen_item = None
-            chosen_fear_type = None
 
             try:
                 fear_type = random.choices(fear_types_population, weights=fear_weights, k=1)[0]
@@ -60,7 +61,6 @@ def _get_dynamic_focus_elements(game_state: GameState, story_data: Dict[str, Any
                 available_items = [item for item in pool if item not in used_items]
                 if available_items:
                     chosen_item = random.choice(available_items)
-                    chosen_fear_type = fear_type
             except (ValueError, IndexError):
                 pass
 
@@ -71,31 +71,34 @@ def _get_dynamic_focus_elements(game_state: GameState, story_data: Dict[str, Any
                     available_items = [item for item in pool if item not in used_items]
                     if available_items:
                         chosen_item = random.choice(available_items)
-                        chosen_fear_type = fear_type
                         break
 
-            if chosen_item and chosen_fear_type:
+            if chosen_item:
                 label = ALL_ELEMENT_CATEGORIES[category_key]
-                selected_elements.append(f"- {label}: {chosen_item}")
+                selected_elements_text.append(f"- {label}: {chosen_item}")
                 used_items.add(chosen_item)
+                newly_used_items.append(chosen_item)
             else:
                 lg.warning(f"Не удалось найти уникальный элемент для категории '{category_key}'. Пул исчерпан.")
 
-    lg.debug(f"Выбраны следующие динамические элементы для промпта: {selected_elements}")
-    return "\n".join(selected_elements)
+    if newly_used_items:
+        await game_state.add_used_story_elements(room_name, newly_used_items)
+
+    lg.debug(f"Выбраны следующие динамические элементы для промпта: {selected_elements_text}")
+    return "\n".join(selected_elements_text)
 
 
 async def construct_prompt(username: str, game_state: GameState) -> str:
     """
     Создает расширенный промпт для ИИ-рассказчика на основе текущего состояния игры,
-    используя динамически выбираемые элементы сцены.
+    используя динамически выбираемые элементы сцены только в течение первых ходов.
     """
     current_room = await game_state.get_player_room(username)
     if not current_room or current_room == 'lobby':
         lg.warning(f"Невозможно создать промпт для {username} в комнате '{current_room}'.")
         return ""
 
-    conversation_history_list = await game_state.get_room_conversation_history(current_room, limit=6)
+    conversation_history_list = await game_state.get_room_conversation_history(current_room, limit=12)
     turn_count = await game_state.get_turn_count(current_room)
     players_in_room_data = await game_state.get_players_in_room(current_room)
     players_in_room = [p.username for p in players_in_room_data if p.username]
@@ -104,8 +107,12 @@ async def construct_prompt(username: str, game_state: GameState) -> str:
     situation_content = f"- ИГРОКИ: {', '.join(players_in_room)}"
 
     scene_focus_prompt = ""
-    if full_story_data:
-        scene_focus_prompt = _get_dynamic_focus_elements(game_state, full_story_data)
+    if turn_count < config.STORY_INJECTION_TURNS:
+        lg.debug(f"Ход #{turn_count}, добавляем идеи из stories.py.")
+        if full_story_data:
+            scene_focus_prompt = await _get_dynamic_focus_elements(game_state, full_story_data, current_room)
+    else:
+        lg.debug(f"Ход #{turn_count}, идеи из stories.py больше не добавляются.")
 
     if not conversation_history_list:
         initial_description = await game_state.get_room_story(current_room)
@@ -113,7 +120,8 @@ async def construct_prompt(username: str, game_state: GameState) -> str:
     else:
         conversation_history = '\n'.join(conversation_history_list)
 
-    if turn_count < IMMERSION_TURNS:
+    # Используем константу из конфига
+    if turn_count < config.IMMERSION_TURNS:
         principles_header = templates.IMMERSION_HEADER
         principles_to_use = templates.IMMERSION_PRINCIPLES
         lg.debug(f"Используются принципы погружения (ход #{turn_count}).")

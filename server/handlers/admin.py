@@ -5,6 +5,7 @@ from rich.console import Console
 from rich.prompt import Prompt
 
 from ..logger import lg
+from ..utils import clear_prompt_directory  # Импортируем утилиту
 
 if TYPE_CHECKING:
     from ..app import Server
@@ -124,7 +125,8 @@ class AdminConsole:
 
         lg.info("Администратор инициировал сброс игры в лобби.")
         await self.game_state.reset_to_lobby()
-        console.print("[bold green]Игра сброшена в лобби.[/bold green]")
+        clear_prompt_directory()
+        console.print("[bold green]Игра сброшена в лобби. Папка с промптами очищена.[/bold green]")
         await self.server.broadcast_system("Игра была сброшена в лобби администратором.")
         await self.server.broadcast_system("STATE_UPDATE LOBBY")
 

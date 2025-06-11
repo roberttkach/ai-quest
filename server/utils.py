@@ -1,9 +1,27 @@
+import os
+import shutil
 import socket
 
 import trio
 
 from .config import DEFAULT_HOST, MAX_PORT_ATTEMPTS
 from .logger import lg
+
+PROMPT_DIR = 'prompts'
+
+
+def clear_prompt_directory():
+    """
+    Полностью очищает и пересоздает директорию для сохранения промптов.
+    """
+    try:
+        if os.path.exists(PROMPT_DIR):
+            shutil.rmtree(PROMPT_DIR)
+            lg.info(f"Директория '{PROMPT_DIR}' успешно удалена.")
+        os.makedirs(PROMPT_DIR, exist_ok=True)
+        lg.info(f"Директория '{PROMPT_DIR}' успешно создана.")
+    except Exception as e:
+        lg.error(f"Ошибка при очистке директории для промптов '{PROMPT_DIR}': {e}", exc_info=True)
 
 
 def get_local_ip() -> str:

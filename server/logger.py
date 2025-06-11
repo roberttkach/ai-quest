@@ -14,7 +14,7 @@ if lg.hasHandlers():
 console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setLevel(logging.INFO)
 
-file_handler = logging.FileHandler('server.log', mode='a', encoding='utf-8')
+file_handler = logging.FileHandler('server.log', mode='w', encoding='utf-8')
 file_handler.setLevel(logging.DEBUG)
 
 formatter = logging.Formatter(LOG_FORMAT, LOG_DATEFMT)
@@ -24,4 +24,4 @@ file_handler.setFormatter(formatter)
 lg.addHandler(console_handler)
 lg.addHandler(file_handler)
 
-lg.info("Логгер сервера успешно инициализирован.")
+lg.info("Логгер сервера успешно инициализирован (лог-файл очищен).")

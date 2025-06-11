@@ -12,7 +12,7 @@ from .game.state import GameState
 from .logger import lg
 from .llm.manager import ModelManager
 from .handlers.player import PlayerConnection
-from .utils import find_available_port
+from .utils import find_available_port, clear_prompt_directory
 
 console = Console()
 
@@ -29,6 +29,9 @@ class Server:
 
     async def run(self):
         lg.info("--- Запуск сервера AI Quest ---")
+
+        clear_prompt_directory()
+
         console.print("[bold blue]Инициализация модели...[/bold blue]")
         if not await self.model_manager.initialize_model():
             lg.critical("Не удалось инициализировать языковую модель. Сервер не может быть запущен.")
@@ -111,12 +114,14 @@ class Server:
         prompt = await construct_prompt(username, self.game_state)
         if not prompt: return
 
+        turn_count = await self.game_state.get_turn_count(room)
+        prompt_filename = f"prompts/prompt_{room}_turn_{turn_count}.txt"
         try:
-            async with await trio.open_file('prompt.txt', 'w', encoding='utf-8') as f:
+            async with await trio.open_file(prompt_filename, 'w', encoding='utf-8') as f:
                 await f.write(prompt)
-            lg.debug("Последний промпт успешно записан в prompt.txt")
+            lg.debug(f"Последний промпт успешно записан в {prompt_filename}")
         except Exception as e:
-            lg.error(f"Не удалось записать промпт в файл prompt.txt: {e}")
+            lg.error(f"Не удалось записать промпт в файл {prompt_filename}: {e}")
 
         players_in_room = await self.game_state.get_players_in_room(room)
         if not players_in_room: return

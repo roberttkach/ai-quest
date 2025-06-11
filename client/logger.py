@@ -10,7 +10,7 @@ lg.propagate = False
 if lg.hasHandlers():
     lg.handlers.clear()
 
-file_handler = logging.FileHandler('client.log', mode='a', encoding='utf-8')
+file_handler = logging.FileHandler('client.log', mode='w', encoding='utf-8')
 file_handler.setLevel(logging.DEBUG)
 
 formatter = logging.Formatter(LOG_FORMAT, LOG_DATEFMT)
@@ -18,4 +18,4 @@ file_handler.setFormatter(formatter)
 
 lg.addHandler(file_handler)
 
-lg.info("Логгер клиента успешно инициализирован.")
+lg.info("Логгер клиента успешно инициализирован (лог-файл очищен).")
