@@ -1,4 +1,5 @@
-rich
-trio
-openai
 python-dotenv
+trio
+rich
+readchar
+openai

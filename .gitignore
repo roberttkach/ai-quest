@@ -1,8 +1,12 @@
 .env
 
 *.log
+*.log.*
 
 __pycache__/
 *.pyc
 
 .idea/
+
+prompts/
+responses/

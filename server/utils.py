@@ -4,24 +4,31 @@ import socket
 
 import trio
 
-from .config import DEFAULT_HOST, MAX_PORT_ATTEMPTS
-from .logger import lg
+from config import DEFAULT_HOST, MAX_PORT_ATTEMPTS
+from logger import lg
 
 PROMPT_DIR = 'prompts'
+RESPONSE_DIR = 'responses'
 
 
-def clear_prompt_directory():
+def initialize_debug_directories():
     """
-    Полностью очищает и пересоздает директорию для сохранения промптов.
+    Полностью очищает и пересоздает директории для сохранения промптов и ответов.
     """
     try:
         if os.path.exists(PROMPT_DIR):
             shutil.rmtree(PROMPT_DIR)
-            lg.info(f"Директория '{PROMPT_DIR}' успешно удалена.")
-        os.makedirs(PROMPT_DIR, exist_ok=True)
-        lg.info(f"Директория '{PROMPT_DIR}' успешно создана.")
+        if os.path.exists(RESPONSE_DIR):
+            shutil.rmtree(RESPONSE_DIR)
+
+        os.makedirs(os.path.join(PROMPT_DIR, 'narration'), exist_ok=True)
+        os.makedirs(os.path.join(PROMPT_DIR, 'state'), exist_ok=True)
+        os.makedirs(os.path.join(RESPONSE_DIR, 'narration'), exist_ok=True)
+        os.makedirs(os.path.join(RESPONSE_DIR, 'state'), exist_ok=True)
+
+        lg.info(f"Директории '{PROMPT_DIR}' и '{RESPONSE_DIR}' успешно очищены и созданы.")
     except Exception as e:
-        lg.error(f"Ошибка при очистке директории для промптов '{PROMPT_DIR}': {e}", exc_info=True)
+        lg.error(f"Ошибка при очистке/создании директорий для отладки: {e}", exc_info=True)
 
 
 def get_local_ip() -> str:
