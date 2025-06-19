@@ -9,7 +9,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from model import ClientDataModel
-from ui.widgets.views import render_help, render_players, render_stats, render_status
+from ui.widgets.views import render_help, render_status, render_map
 
 if TYPE_CHECKING:
     from engine import ClientEngine
@@ -130,6 +130,9 @@ class GameState(BaseState):
 
     async def handle_user_input(self, message: str):
         self.model.command_output = None
+        if message.lower() == '/map':
+            await self.engine.send_message('/map')
+            return
         if not message.startswith('/'):
             if self.model.username:
                 style = "bold cyan"
@@ -149,14 +152,11 @@ class GameState(BaseState):
             if prefix == "STATUS_UPDATE":
                 self.model.command_output = render_status(json.loads(content))
                 return
-            if prefix == "STATS_UPDATE":
-                self.model.command_output = render_stats(json.loads(content))
-                return
-            if prefix == "PLAYERS_UPDATE":
-                self.model.command_output = render_players(json.loads(content), self.model.username or "")
-                return
             if prefix == "HELP_UPDATE":
                 self.model.command_output = render_help()
+                return
+            if prefix == "MAP_UPDATE":
+                self.model.command_output = render_map(json.loads(content))
                 return
         except (json.JSONDecodeError, TypeError):
             self.model.command_output = Text("Ошибка отображения данных: неверный формат от сервера.", style="bold red")

@@ -4,7 +4,7 @@ import trio
 
 import config
 from logger import lg
-from game.player import Player
+from game.player import Player, StatusEffect
 from game.stories import STORIES
 
 
@@ -19,6 +19,8 @@ class Location:
         self.used_story_elements: Set[str] = set()
         self.turn_counter: int = 0
         self.pending_actions: Dict[str, str] = {}
+        self.parent_location: Optional[str] = None
+        self.sub_locations: Set[str] = set()
         lg.info(f"Объект Location '{name}' создан.")
 
     def add_player(self, username: str):
@@ -57,6 +59,7 @@ class GameState:
     Центральное хранилище состояния игрового мира.
     Оперирует чистыми моделями данных (Player, Location) и не зависит от сетевого слоя.
     """
+
     def __init__(self):
         self._lock = trio.Lock()
         self.state: str = 'lobby'
@@ -96,7 +99,8 @@ class GameState:
         async with self._lock:
             username = player.username
             if len(self.players) >= config.MAX_PLAYERS:
-                lg.warning(f"Отклонено подключение для '{username}': сервер полон ({len(self.players)}/{config.MAX_PLAYERS}).")
+                lg.warning(
+                    f"Отклонено подключение для '{username}': сервер полон ({len(self.players)}/{config.MAX_PLAYERS}).")
                 return False, "full"
 
             if username in self.players:
@@ -121,14 +125,15 @@ class GameState:
         """Удаляет игрока из игры и возвращает имя его последней известной локации."""
         async with self._lock:
             player_model = self.players.pop(username, None)
-            if player_model:
+            if player_model is None:
+                lg.warning(f"Попытка удалить несуществующего игрока '{username}'.")
+                return None
+            else:
                 location_name = player_model.location_name
                 lg.info(f"Игрок '{username}' удаляется из игры из локации '{location_name}'.")
                 if location_name and location_name in self.locations:
                     self.locations[location_name].remove_player(username)
                 return location_name
-            lg.warning(f"Попытка удалить несуществующего игрока '{username}'.")
-            return None
 
     async def apply_turn_changes(self, state_changes: Dict[str, Any]) -> Tuple[
         List[Tuple[Player, Optional[str]]], bool]:
@@ -150,6 +155,15 @@ class GameState:
                     if 'description' in update:
                         location.description = update['description']
                         lg.info(f"Описание локации '{loc_name}' обновлено/создано.")
+
+                    if parent_loc_name := update.get("parent_location"):
+                        if location.parent_location and location.parent_location in self.locations:
+                            self.locations[location.parent_location].sub_locations.discard(loc_name)
+
+                        parent_location = self._get_or_create_location_unsafe(parent_loc_name)
+                        parent_location.sub_locations.add(loc_name)
+                        location.parent_location = parent_loc_name
+                        lg.info(f"Локация '{loc_name}' теперь является дочерней для '{parent_loc_name}'.")
 
             if connection_updates := state_changes.get('connection_updates'):
                 for conn_update in connection_updates:
@@ -191,8 +205,15 @@ class GameState:
                     if 'inventory_remove' in p_update:
                         player.inventory = [item for item in player.inventory if
                                             item not in p_update['inventory_remove']]
-                    if 'status_update' in p_update and isinstance(p_update['status_update'], list):
-                        player.status = p_update['status_update']
+
+                    if effects_update := p_update.get('status_effects_update'):
+                        if effects_to_add := effects_update.get('add'):
+                            for effect_data in effects_to_add:
+                                if not any(e.name == effect_data['name'] for e in player.status_effects):
+                                    player.status_effects.append(StatusEffect(**effect_data))
+                        if effects_to_remove := effects_update.get('remove'):
+                            player.status_effects = [e for e in player.status_effects if
+                                                     e.name not in effects_to_remove]
 
                     if new_location_name := p_update.get("move_to_location"):
                         await self._move_player_to_location_unsafe(player, new_location_name, moved_players_info)
@@ -252,7 +273,8 @@ class GameState:
         async with self._lock:
             return list(self.players.values())
 
-    async def get_connected_usernames(self) -> List[str]:
+    async def get_all_player_usernames(self) -> List[str]:
+        """Возвращает список имен всех игроков в игре."""
         async with self._lock:
             return list(self.players.keys())
 
@@ -284,35 +306,31 @@ class GameState:
                 start_location.add_player(player.username)
             return True
 
-    async def get_stats(self) -> Dict[str, Any]:
+    async def get_world_graph_data(self) -> Dict[str, Any]:
+        """Собирает и возвращает полную структуру мира для визуализации."""
         async with self._lock:
-            player_count = len(self.players)
-            location_count = len(self.locations)
-            connection_count = sum(len(v) for v in self.location_graph.values()) // 2
+            locations_data = []
+            for name, loc in self.locations.items():
+                locations_data.append({
+                    "name": name,
+                    "parent": loc.parent_location,
+                    "players": list(loc.players_present)
+                })
+
+            connections_data = []
+            for loc_name, neighbors in self.location_graph.items():
+                for neighbor in neighbors:
+                    if loc_name < neighbor:
+                        connections_data.append(sorted([loc_name, neighbor]))
+
             return {
-                "player_count": player_count,
-                "location_count": location_count,
-                "connection_count": connection_count,
-                "state": self.state,
-                "world_flags": self.world_flags or "Нет"
+                "locations": locations_data,
+                "connections": connections_data
             }
 
     async def is_game_active(self) -> bool:
         async with self._lock:
             return self.state == 'active'
-
-    async def set_fear_weights(self, new_weights: Dict[str, int]):
-        async with self._lock:
-            self.fear_weights = new_weights
-            lg.info(f"Веса страха обновлены администратором: {new_weights}")
-
-    async def set_game_variable(self, var_name: str, value: int):
-        async with self._lock:
-            if hasattr(self, var_name):
-                setattr(self, var_name, value)
-                lg.info(f"Игровая переменная '{var_name}' обновлена на {value}")
-            else:
-                lg.warning(f"Попытка установить несуществующую переменную '{var_name}'")
 
     async def get_full_config(self) -> Dict[str, Any]:
         """Возвращает словарь с текущими настраиваемыми параметрами."""

@@ -99,10 +99,13 @@ async def construct_narration_prompt(game_state: GameState, locations: List[Loca
                                      players: List[Player], immersion_turns: int,
                                      story_injection_turns: int, max_history_char_length: int) -> str:
     """Создает промпт для генерации повествования для группы связанных локаций."""
-    player_states = [{"username": p.username, "inventory": p.inventory, "status": p.status} for p in players]
+    player_states = [
+        {"username": p.username, "inventory": p.inventory, "status_effects": [vars(e) for e in p.status_effects]} for p
+        in players]
     location_group_info = [
         {"name": loc.name, "description": loc.description,
-         "players_present": sorted(list(loc.players_present)), "turn_count": loc.turn_counter}
+         "players_present": sorted(list(loc.players_present)), "turn_count": loc.turn_counter,
+         "parent_location": loc.parent_location, "sub_locations": list(loc.sub_locations)}
         for loc in locations
     ]
     connections_list = _get_connections_in_group(game_state, locations)
@@ -140,6 +143,28 @@ async def construct_narration_prompt(game_state: GameState, locations: List[Loca
     if main_location.turn_counter < story_injection_turns and story_data:
         scene_focus_prompt = await _select_and_update_focus_elements(game_state, story_data, main_location)
 
+    merge_conflict_prompt = ""
+    turn_counters = {loc.turn_counter for loc in locations}
+    if len(turn_counters) > 1:
+        conflicting_descriptions = []
+        desc_map: Dict[str, Set[str]] = {}
+        for loc in locations:
+            desc_map.setdefault(loc.name, set()).add(loc.description)
+
+        for name, descriptions in desc_map.items():
+            if len(descriptions) > 1:
+                conflicting_descriptions.append(f"Локация '{name}' имеет противоречивые описания:\n" +
+                                                "\n".join([f"  - Версия: '{d[:150]}...'" for d in descriptions]))
+
+        if conflicting_descriptions:
+            merge_conflict_prompt = (
+                "### ВНИМАНИЕ: СЛИЯНИЕ РЕАЛЬНОСТЕЙ!\n"
+                "Группы игроков существовали в разных временных линиях и только что встретились. Возникли противоречия в состоянии мира. Твоя задача — создать единую, логичную реальность из этого хаоса.\n\n"
+                "**ПРОТИВОРЕЧИЯ ДЛЯ РАЗРЕШЕНИЯ:**\n"
+                f"{'\n'.join(conflicting_descriptions)}\n\n"
+                "**ТВОЯ ЗАДАЧА:** Опиши, что игроки видят **СЕЙЧАС**, в момент слияния. Твое описание должно стать новой, единой истиной. Объясни расхождения, если это возможно (например, 'вода, затопившая комнату, теперь быстро уходит в решетку на полу, оставляя ил и сырость'). Не упоминай слова 'парадокс' или 'временная линия'."
+            )
+
     principles_header, principles_to_use = (templates.IMMERSION_HEADER,
                                             templates.IMMERSION_PRINCIPLES) if main_location.turn_counter < immersion_turns else (
         templates.PRINCIPLES_HEADER, templates.NARRATIVE_PRINCIPLES)
@@ -149,6 +174,8 @@ async def construct_narration_prompt(game_state: GameState, locations: List[Loca
         "### ТЕКУЩЕЕ СОСТОЯНИЕ МИРА И ИГРОКОВ (JSON):", f"```json\n{state_json_str}\n```",
         "### ДЕЙСТВИЯ ИГРОКОВ В ЭТОМ ХОДЕ:", player_actions_str,
     ]
+    if merge_conflict_prompt:
+        prompt_sections.append(merge_conflict_prompt)
     if scene_focus_prompt:
         prompt_sections.append(f"### {templates.SCENE_FOCUS_HEADER}\n{scene_focus_prompt}")
     prompt_sections.extend([
@@ -162,8 +189,14 @@ async def construct_narration_prompt(game_state: GameState, locations: List[Loca
 def construct_state_update_prompt(game_state: GameState, locations: List[Location], players: List[Player],
                                   full_narration: str) -> str:
     """Создает промпт для извлечения изменений состояния в формате JSON для группы локаций."""
-    player_states = [{"username": p.username, "inventory": p.inventory, "status": p.status} for p in players]
-    location_group_info = [{"name": loc.name, "description": loc.description} for loc in locations]
+    player_states = [
+        {"username": p.username, "inventory": p.inventory, "status_effects": [vars(e) for e in p.status_effects]} for p
+        in players]
+    location_group_info = [
+        {"name": loc.name, "description": loc.description,
+         "parent_location": loc.parent_location, "sub_locations": list(loc.sub_locations)}
+        for loc in locations
+    ]
     connections_list = _get_connections_in_group(game_state, locations)
 
     state_json_data: Dict[str, Any] = {
@@ -179,10 +212,19 @@ def construct_state_update_prompt(game_state: GameState, locations: List[Locatio
         "Проанализируй ИСХОДНОЕ СОСТОЯНИЕ и НОВОЕ ПОВЕСТВОВАНИЕ. "
         "Верни JSON-объект, отражающий ВСЕ изменения, строго следуя схеме.\n"
         "Ключевые моменты:\n"
-        "1.  `player_updates`: Заполняй для каждого игрока, чье состояние изменилось.\n"
+        "1.  `player_updates`: Заполняй для каждого игрока, чье состояние изменилось (инвентарь, эффекты, перемещение).\n"
         "2.  `location_updates`: Используй `change_type: 'UPDATE_DESCRIPTION'` для изменения локации, `change_type: 'CREATE'` для новой.\n"
-        "3.  `connection_updates`: **ВАЖНО!** Создавай связь (`action: 'CREATE'`) только если действие явно и физически соединяет две локации (открыл дверь, проломил стену). **НЕ СОЗДАВАЙ СВЯЗЬ** при мистическом перемещении (телепорт, потеря сознания). В таких случаях просто используй `move_to_location`.\n"
-        "4.  Если изменений нет, верни пустой JSON-объект `{}`."
+        "3.  **Иерархия и Связи:**\n"
+        "    - **`parent_location`**: Используй это поле в `location_updates`, чтобы показать **вложенность**. Например, комната (`security_room`) находится *внутри* станции (`endless_metro`).\n"
+        "    - **`connection_updates`**: Используй это для **перемещения** между локациями. Например, дверь соединяет `security_room` и `corridor_A`.\n"
+        "4.  Если изменений нет, верни пустой JSON-объект `{}`.\n"
+        "5.  **ПРАВИЛА ПЕРЕМЕЩЕНИЯ ИГРОКОВ (КРИТИЧЕСКИ ВАЖНО):**\n"
+        "    - **СЦЕНАРИЙ 1: Игрок открывает дверь и переходит в соседнюю комнату.**\n"
+        "      ДЕЙСТВИЯ: 1. Используй `move_to_location` для игрока. 2. Убедись, что между старой и новой локацией есть связь (`action: 'CREATE'` в `connection_updates`), если ее не было.\n"
+        "    - **СЦЕНАРИЙ 2: Игрок телепортируется, теряет сознание и просыпается в другом месте, или перемещается магическим/необъяснимым образом.**\n"
+        "      ДЕЙСТВИЯ: 1. Используй `move_to_location` для игрока. 2. **НЕ СОЗДАВАЙ** связь в `connection_updates`. Это намеренно разделит группы игроков. Это ПРАВИЛЬНО.\n"
+        "    - **СЦЕНАРИЙ 3: Дверь/проход между локациями заваливает или он уничтожается.**\n"
+        "      ДЕЙСТВИЯ: Используй `action: 'DESTROY'` в `connection_updates`, чтобы разорвать связь между локациями. Это разделит группы."
     )
 
     prompt_sections = [

@@ -21,7 +21,7 @@ class NetworkHandler:
         """Устанавливает TCP-соединение и выполняет последовательность входа."""
         try:
             self.engine.console.print(f"Подключение к {self.engine.host}:{self.engine.port}...")
-            with trio.move_on_after(10):
+            with trio.move_on_after(60):
                 self.stream = await trio.open_tcp_stream(self.engine.host, self.engine.port)
             if not self.stream:
                 self.engine.console.print("[bold red]Не удалось подключиться: Таймаут[/bold red]")

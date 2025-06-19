@@ -72,7 +72,7 @@ class Server:
                 await player_conn.send_direct(f"NARRATE {location.description.replace(chr(10), '<<BR>>')}")
                 await player_conn.send_direct("SYSTEM NARRATION_END")
         else:
-            all_players = await self.game_state.get_connected_usernames()
+            all_players = await self.game_state.get_all_player_usernames()
             await self.broadcast_system("LOBBY_UPDATE " + ",".join(all_players), is_direct=True)
 
     async def remove_player(self, player_conn: PlayerConnection):
@@ -87,7 +87,7 @@ class Server:
             await self.broadcast_to_locations(component, f"SYSTEM {username} покинул игру.", exclude=[username])
             await self.game_engine.on_player_removed(last_loc_name)
         else:
-            all_players = await self.game_state.get_connected_usernames()
+            all_players = await self.game_state.get_all_player_usernames()
             if all_players:
                 await self.broadcast_system("LOBBY_UPDATE " + ",".join(all_players), is_direct=True)
 

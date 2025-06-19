@@ -22,9 +22,9 @@ class ModelManager:
         self.narrator_model_name = config.NARRATOR_MODEL_NAME
         self.analyzer_model_name = config.ANALYZER_MODEL_NAME
         self.narrator_params: Dict[str, Any] = {
-            "temperature": 0.55,
-            "top_p": 0.94,
-            "frequency_penalty": 1.2,
+            "temperature": 0.6,
+            "top_p": 0.9,
+            "frequency_penalty": 1.1,
         }
         self.analyzer_params: Dict[str, Any] = {
             "temperature": 0.1,
@@ -35,27 +35,6 @@ class ModelManager:
     @property
     def is_model_loaded(self) -> bool:
         return self.client is not None
-
-    async def set_model(self, model_type: str, model_name: str) -> bool:
-        """Безопасно изменяет имя модели для 'narrator' или 'analyzer'."""
-        async with self._lock:
-            if model_type == 'narrator':
-                self.narrator_model_name = model_name
-                lg.info(f"Модель Рассказчика изменена на: {model_name}")
-                return True
-            elif model_type == 'analyzer':
-                self.analyzer_model_name = model_name
-                lg.info(f"Модель Анализатора изменена на: {model_name}")
-                return True
-        return False
-
-    async def get_models(self) -> Dict[str, str]:
-        """Возвращает текущие используемые модели."""
-        async with self._lock:
-            return {
-                "narrator_model": self.narrator_model_name,
-                "analyzer_model": self.analyzer_model_name,
-            }
 
     async def initialize_model(self) -> bool:
         lg.info("Запрос на инициализацию клиента Deepseek API.")

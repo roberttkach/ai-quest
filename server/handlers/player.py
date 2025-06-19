@@ -137,21 +137,21 @@ class PlayerConnection:
             else:
                 location = await self.server.game_state.get_or_create_location(player_model.location_name)
                 other_players = [p for p in location.players_present if p != self.username]
+                player_status_list = [e.name for e in player_model.status_effects]
                 status_data = {
-                    "player": {"name": player_model.username, "status": player_model.status, "inventory": player_model.inventory},
+                    "player": {"name": player_model.username, "status": player_status_list,
+                               "inventory": player_model.inventory},
                     "location": {"name": location.name, "description": location.description, "players": other_players}
                 }
                 await self.send_direct(f"STATUS_UPDATE {json.dumps(status_data, ensure_ascii=False)}")
-        elif command == '/stats':
-            stats_data = await self.server.game_state.get_stats()
-            await self.send_direct(f"STATS_UPDATE {json.dumps(stats_data, ensure_ascii=False)}")
-        elif command == '/players':
-            players_list = await self.server.game_state.get_connected_usernames()
-            await self.send_direct(f"PLAYERS_UPDATE {json.dumps({'players': players_list}, ensure_ascii=False)}")
         elif command == '/help':
             await self.send_direct("HELP_UPDATE")
-        else:
-            await self.send_direct(f"ERROR Неизвестная команда: {command}")
+        elif command == '/map':
+            graph_data = await self.server.game_state.get_world_graph_data()
+            player_model = await self.server.game_state.get_player(self.username)
+            if player_model:
+                graph_data['current_location'] = player_model.location_name
+            await self.send_direct(f"MAP_UPDATE {json.dumps(graph_data, ensure_ascii=False)}")
 
         await self.send_direct("SYSTEM NARRATION_END")
 
@@ -164,4 +164,5 @@ class PlayerConnection:
                     message += '\n'
                 await self.stream.send_all(message.encode('utf-8'))
             except (trio.BrokenResourceError, trio.ClosedResourceError):
-                lg.warning(f"Не удалось отправить сообщение для '{self.username or self.peer_addr}': соединение уже закрыто.")
+                lg.warning(
+                    f"Не удалось отправить сообщение для '{self.username or self.peer_addr}': соединение уже закрыто.")

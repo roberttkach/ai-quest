@@ -4,6 +4,7 @@ from typing import List, Set, Dict, Optional, TYPE_CHECKING
 import trio
 
 from game.state import Location
+from game.player import StatusEffect
 from logger import lg
 from llm.prompts import construct_narration_prompt, construct_state_update_prompt
 
@@ -136,6 +137,25 @@ class GameEngine:
             if not players_in_group:
                 lg.warning(f"Попытка обработать ход в пустой группе '{group_name}'. Отмена.")
                 return
+
+            expired_effects_messages = []
+            for player in players_in_group:
+                active_effects = []
+                for effect in player.status_effects:
+                    if effect.duration_turns is not None:
+                        effect.duration_turns -= 1
+                        if effect.duration_turns <= 0:
+                            expired_effects_messages.append(f"Эффект '{effect.name}' на игроке {player.username} прошел.")
+                            continue
+                    active_effects.append(effect)
+                player.status_effects = active_effects
+                if not player.status_effects:
+                    player.status_effects.append(StatusEffect(name="здоров", description="В полном порядке.", is_positive=True))
+
+            if expired_effects_messages:
+                main_location = group_locations[0]
+                for msg in expired_effects_messages:
+                    main_location.add_system_message_to_history(msg)
 
             if not is_merge_turn:
                 for loc in group_locations: loc.turn_counter += 1
